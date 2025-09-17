@@ -192,18 +192,21 @@ class VideoLabeler(QWidget):
     def update_label_list(self):
         self.label_list.clear()
         frame_num = self.get_current_frame_number()
-        found = False
-        for label in self.labels:
-            if label.start <= frame_num <= label.end:
-                self.label_list.addItem(str(label))
-                # Auto-select and fill edit fields for the current label
-                self.label_list.setCurrentRow(0)
-                self.label_edit.setText(label.label)
-                self.start_edit.setText(str(label.start))
-                self.end_edit.setText(str(label.end))
-                found = True
-                break
-        if not found:
+        # print(f"[DEBUG] Current frame number: {frame_num}")
+        # for label in self.labels:
+        #     print(f"[DEBUG] Label: '{label.label}' Range: {label.start}-{label.end}")
+        matches = [label for label in self.labels if label.start <= frame_num <= label.end]
+        # print(f"[DEBUG] Matching labels for frame {frame_num}: {[str(label) for label in matches]}")
+        for label in matches:
+            self.label_list.addItem(str(label))
+        # Only fill edit fields if a label is selected
+        if matches:
+            self.label_list.setCurrentRow(0)
+            selected_label = matches[0]
+            self.label_edit.setText(selected_label.label)
+            self.start_edit.setText(str(selected_label.start))
+            self.end_edit.setText(str(selected_label.end))
+        else:
             self.label_edit.clear()
             self.start_edit.clear()
             self.end_edit.clear()
