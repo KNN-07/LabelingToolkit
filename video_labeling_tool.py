@@ -23,7 +23,9 @@ class VideoLabeler(QWidget):
         self.setWindowTitle("Video Action Labeling Tool")
         self.frame_folder = None
         self.label_file = None
-        self.labels = []
+        self.labels_by_id = {}  # {person_id: [LabelEntry, ...]}
+        self.person_ids = []
+        self.selected_person_id = None
         self.frames = []
         self.current_frame_idx = 0
         self.timer = QTimer()
@@ -63,6 +65,13 @@ class VideoLabeler(QWidget):
         control_layout.addWidget(self.play_btn, 1)
         control_layout.addWidget(self.pause_btn, 1)
         layout.addLayout(control_layout)
+
+        # Dropdown for person ID selection
+        from PyQt5.QtWidgets import QComboBox
+        self.id_dropdown = QComboBox()
+        self.id_dropdown.currentIndexChanged.connect(self.person_id_changed)
+        layout.addWidget(QLabel("Select Person ID:"))
+        layout.addWidget(self.id_dropdown)
 
         self.label_list = QListWidget()
         self.label_list.setMinimumHeight(80)
@@ -135,9 +144,13 @@ class VideoLabeler(QWidget):
         if not self.label_file:
             QMessageBox.warning(self, "Missing Input", "Please select a label file.")
             return
-        self.labels = self.parse_label_file(self.label_file)
+        self.labels_by_id = self.parse_label_file(self.label_file)
+        self.person_ids = list(self.labels_by_id.keys())
+        self.id_dropdown.clear()
+        self.id_dropdown.addItems(self.person_ids)
+        self.selected_person_id = self.person_ids[0] if self.person_ids else None
         print(f"Loaded label file: {self.label_file}")
-        print(f"Number of labels loaded: {len(self.labels)}")
+        print(f"Person IDs found: {self.person_ids}")
         self.update_label_list()
 
     def load_frame(self):
@@ -170,36 +183,36 @@ class VideoLabeler(QWidget):
         self.load_frame()
 
     def parse_label_file(self, path):
-        labels = []
+        labels_by_id = {}
+        current_id = None
         with open(path, 'r') as f:
             lines = f.readlines()
-        if not lines:
-            return labels
-        person_id = lines[0].split(':')[0].strip()
-        for line in lines[1:]:
+        for line in lines:
             line = line.strip()
             if not line:
                 continue
-            # Split on last colon
-            if ':' in line:
+            # Only treat as person id if left side before ':' is a number
+            m = re.match(r"(\d+):", line)
+            if m:
+                current_id = m.group(1)
+                if current_id not in labels_by_id:
+                    labels_by_id[current_id] = []
+                continue
+            if current_id and ':' in line:
                 label_part, frame_part = line.rsplit(':', 1)
                 frame_match = re.match(r"\s*(\d+)\s*-\s*(\d+)", frame_part.strip())
                 if frame_match:
                     start, end = frame_match.groups()
-                    labels.append(LabelEntry(person_id, label_part.strip(), start, end))
-        return labels
+                    labels_by_id[current_id].append(LabelEntry(current_id, label_part.strip(), start, end))
+        return labels_by_id
 
     def update_label_list(self):
         self.label_list.clear()
         frame_num = self.get_current_frame_number()
-        # print(f"[DEBUG] Current frame number: {frame_num}")
-        # for label in self.labels:
-        #     print(f"[DEBUG] Label: '{label.label}' Range: {label.start}-{label.end}")
-        matches = [label for label in self.labels if label.start <= frame_num <= label.end]
-        # print(f"[DEBUG] Matching labels for frame {frame_num}: {[str(label) for label in matches]}")
+        labels = self.labels_by_id.get(self.selected_person_id, [])
+        matches = [label for label in labels if label.start <= frame_num <= label.end]
         for label in matches:
-            self.label_list.addItem(str(label))
-        # Only fill edit fields if a label is selected
+            self.label_list.addItem(f"{label.person_id} - {label}")
         if matches:
             self.label_list.setCurrentRow(0)
             selected_label = matches[0]
@@ -227,19 +240,22 @@ class VideoLabeler(QWidget):
         if not label or not start.isdigit() or not end.isdigit():
             QMessageBox.warning(self, "Invalid Input", "Please enter valid label, start, and end.")
             return
-        person_id = self.labels[0].person_id if self.labels else "1"
+        person_id = self.selected_person_id or (self.person_ids[0] if self.person_ids else "1")
         new_label = LabelEntry(person_id, label, start, end)
+        labels = self.labels_by_id.setdefault(person_id, [])
         selected = self.label_list.currentItem()
         if selected:
             label_str = selected.text()
-            for i, l in enumerate(self.labels):
+            # Remove ID prefix for comparison
+            label_str = label_str.split(' - ', 1)[-1]
+            for i, l in enumerate(labels):
                 if str(l) == label_str:
-                    self.labels[i] = new_label
+                    labels[i] = new_label
                     break
             else:
-                self.labels.append(new_label)
+                labels.append(new_label)
         else:
-            self.labels.append(new_label)
+            labels.append(new_label)
         self.update_label_list()
 
     def delete_label(self):
@@ -247,15 +263,19 @@ class VideoLabeler(QWidget):
         if not selected:
             return
         label_str = selected.text()
-        for i, l in enumerate(self.labels):
+        label_str = label_str.split(' - ', 1)[-1]
+        labels = self.labels_by_id.get(self.selected_person_id, [])
+        for i, l in enumerate(labels):
             if str(l) == label_str:
-                del self.labels[i]
+                del labels[i]
                 break
         self.update_label_list()
 
     def label_selected(self, item):
         label_str = item.text()
-        for l in self.labels:
+        label_str = label_str.split(' - ', 1)[-1]
+        labels = self.labels_by_id.get(self.selected_person_id, [])
+        for l in labels:
             if str(l) == label_str:
                 self.label_edit.setText(l.label)
                 self.start_edit.setText(str(l.start))
@@ -265,12 +285,18 @@ class VideoLabeler(QWidget):
     def save_labels(self):
         if not self.label_file:
             return
-        person_id = self.labels[0].person_id if self.labels else "1"
         with open(self.label_file, 'w') as f:
-            f.write(f"{person_id}: student, appearance\n")
-            for l in self.labels:
-                f.write(f"{l.label}: {l.start} - {l.end}\n")
+            for person_id in self.person_ids:
+                f.write(f"{person_id}: student, appearance\n")
+                for l in self.labels_by_id.get(person_id, []):
+                    f.write(f"{l.label}: {l.start} - {l.end}\n")
         QMessageBox.information(self, "Saved", "Labels saved successfully.")
+
+    def person_id_changed(self, idx):
+        if idx < 0 or idx >= len(self.person_ids):
+            return
+        self.selected_person_id = self.person_ids[idx]
+        self.update_label_list()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
