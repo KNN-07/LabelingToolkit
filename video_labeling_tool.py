@@ -18,6 +18,19 @@ class LabelEntry:
         return f"{self.label}: {self.start} - {self.end}"
 
 class VideoLabeler(QWidget):
+    def replace_label_in_frame_range(self, person_id, start_frame, end_frame, new_label):
+        """
+        For the given person_id, replace the label of all LabelEntry objects whose range overlaps
+        with [start_frame, end_frame] (inclusive) with new_label. Do not merge ranges, just change the label.
+        """
+        if person_id not in self.labels_by_id:
+            return
+        labels = self.labels_by_id[person_id]
+        for entry in labels:
+            # Check if entry overlaps with the given frame range
+            if entry.end >= start_frame and entry.start <= end_frame:
+                entry.label = new_label
+        self.update_label_list()
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Video Action Labeling Tool")
@@ -93,6 +106,22 @@ class VideoLabeler(QWidget):
         edit_layout.addWidget(self.delete_label_btn, 1)
         layout.addLayout(edit_layout)
 
+        # UI for batch label replacement
+        batch_layout = QHBoxLayout()
+        self.batch_start_edit = QLineEdit()
+        self.batch_start_edit.setPlaceholderText("Start Frame")
+        self.batch_end_edit = QLineEdit()
+        self.batch_end_edit.setPlaceholderText("End Frame")
+        self.batch_label_edit = QLineEdit()
+        self.batch_label_edit.setPlaceholderText("New Label Action")
+        self.batch_replace_btn = QPushButton("Replace Label in Range")
+        batch_layout.addWidget(QLabel("Batch Replace:"))
+        batch_layout.addWidget(self.batch_start_edit, 1)
+        batch_layout.addWidget(self.batch_end_edit, 1)
+        batch_layout.addWidget(self.batch_label_edit, 2)
+        batch_layout.addWidget(self.batch_replace_btn, 1)
+        layout.addLayout(batch_layout)
+
         self.save_btn = QPushButton("Save Labels")
         layout.addWidget(self.save_btn)
 
@@ -108,6 +137,26 @@ class VideoLabeler(QWidget):
         self.delete_label_btn.clicked.connect(self.delete_label)
         self.save_btn.clicked.connect(self.save_labels)
         self.label_list.itemClicked.connect(self.label_selected)
+
+        self.batch_replace_btn.clicked.connect(self.batch_replace_label_action)
+    def batch_replace_label_action(self):
+        start_text = self.batch_start_edit.text().strip()
+        end_text = self.batch_end_edit.text().strip()
+        label_text = self.batch_label_edit.text().strip()
+        if not start_text.isdigit() or not end_text.isdigit() or not label_text:
+            QMessageBox.warning(self, "Invalid Input", "Please enter valid start/end frame and label action.")
+            return
+        start_frame = int(start_text)
+        end_frame = int(end_text)
+        if start_frame > end_frame:
+            QMessageBox.warning(self, "Invalid Range", "Start frame must be less than or equal to end frame.")
+            return
+        person_id = self.selected_person_id or (self.person_ids[0] if self.person_ids else None)
+        if not person_id:
+            QMessageBox.warning(self, "No Person Selected", "Please select a person ID.")
+            return
+        self.replace_label_in_frame_range(person_id, start_frame, end_frame, label_text)
+        QMessageBox.information(self, "Batch Replace", "Labels updated for selected person in given frame range.")
 
     def select_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Frame Folder")
